@@ -3,32 +3,28 @@ from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import librosa
 import cv2
-from tensorflow.keras.models import load_model
 import tempfile
 import os
 from pydantic import BaseModel
 from datetime import datetime
 import asyncio
-import gdown
-from dotenv import load_dotenv
-load_dotenv()
+from ai_edge_litert.interpreter import Interpreter
+
 
 app = FastAPI(
     title="DataForge Emotion Recognition API",
-    description="Real-time emotion and language detection from audio",
+    description="Emotion and language detection from audio",
     version="1.0"
 )
 
-# CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # For production, replace with your frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Labels
 EMOTION_MAP = {
     0: "Calm",
     1: "Happy",
@@ -43,12 +39,11 @@ LANG_MAP = {
     1: "Urdu"
 }
 
-# Model config
-MODEL_PATH = os.getenv("MODEL_PATH", "./best_of_best_model.keras")
-MODEL_FILE_ID = os.getenv("MODEL_FILE_ID")
+MODEL_PATH = "./best_model.tflite"
 
-# Global model
-best_model = None
+interpreter = None
+input_details = None
+output_details = None
 model_lock = asyncio.Lock()
 
 
@@ -66,52 +61,30 @@ class PredictionResponse(BaseModel):
     success: bool
 
 
-def download_model_if_missing():
-    """
-    Downloads model from Google Drive only if it does not already exist.
-    """
-    if os.path.exists(MODEL_PATH):
-        print(f"Model already exists at: {MODEL_PATH}")
-        return
-
-    if not MODEL_FILE_ID:
-        raise RuntimeError("MODEL_FILE_ID environment variable is missing")
-
-    print("Downloading model from Google Drive...")
-
-    url = f"https://drive.google.com/uc?id={MODEL_FILE_ID}"
-
-    output = gdown.download(
-        url=url,
-        output=MODEL_PATH,
-        quiet=False,
-    )
-
-    if output is None or not os.path.exists(MODEL_PATH):
-        raise RuntimeError("Model download failed")
-
-    print(f"Model downloaded to: {MODEL_PATH}")
-
-
 async def ensure_model_loaded():
-    """
-    Lazy-loads model.
-    Called by /health and /predict.
-    """
-    global best_model
+    global interpreter, input_details, output_details
 
-    if best_model is not None:
+    if interpreter is not None:
         return
 
     async with model_lock:
-        if best_model is not None:
+        if interpreter is not None:
             return
 
-        download_model_if_missing()
+        if not os.path.exists(MODEL_PATH):
+            raise RuntimeError(f"Model file not found at {MODEL_PATH}")
 
-        print("Loading model into memory...")
-        best_model = load_model(MODEL_PATH, compile=False)
-        print("Model loaded successfully")
+        print("Loading TFLite model into memory...")
+
+        interpreter = Interpreter(model_path=MODEL_PATH)
+        interpreter.allocate_tensors()
+
+        input_details = interpreter.get_input_details()
+        output_details = interpreter.get_output_details()
+
+        print("TFLite model loaded successfully")
+        print("Input details:", input_details)
+        print("Output details:", output_details)
 
 
 @app.get("/")
@@ -128,11 +101,6 @@ async def root():
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
-    """
-    Health endpoint also warms up the model.
-
-    Frontend should call this when user visits the site.
-    """
     try:
         await ensure_model_loaded()
 
@@ -166,9 +134,6 @@ def validate_audio_file(file: UploadFile):
 
 
 def preprocess_audio(audio_bytes: bytes, suffix: str = ".wav"):
-    """
-    Converts audio bytes into mel spectrogram image tensor.
-    """
     tmp_path = None
 
     try:
@@ -210,7 +175,6 @@ def preprocess_audio(audio_bytes: bytes, suffix: str = ".wav"):
         )
 
         img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_GRAY2RGB)
-
         X_input = np.expand_dims(img_rgb, axis=0).astype(np.float32)
 
         return X_input
@@ -225,12 +189,6 @@ def preprocess_audio(audio_bytes: bytes, suffix: str = ".wav"):
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict_emotion(file: UploadFile = File(...)):
-    """
-    Predict emotion and language from audio file.
-
-    Accepts: wav, webm, mp3, flac, m4a, ogg
-    Returns: emotion, language, and confidence scores
-    """
     try:
         await ensure_model_loaded()
 
@@ -245,10 +203,14 @@ async def predict_emotion(file: UploadFile = File(...)):
 
         X_input = preprocess_audio(audio_bytes, suffix=ext)
 
-        preds = best_model.predict(X_input, verbose=0)
+        interpreter.set_tensor(input_details[0]["index"], X_input)
+        interpreter.invoke()
 
-        emotion_probs = preds[0][0]
-        language_probs = preds[1][0]
+        language_probs = interpreter.get_tensor(output_details[0]["index"])[0]
+        emotion_probs = interpreter.get_tensor(output_details[1]["index"])[0]
+
+        print("Output 0 shape:", emotion_probs.shape, emotion_probs)
+        print("Output 1 shape:", language_probs.shape, language_probs)
 
         emotion_idx = int(np.argmax(emotion_probs))
         emotion_confidence = float(emotion_probs[emotion_idx])

@@ -1,18 +1,18 @@
 # DataForge Emotion Recognition API
 
-A FastAPI-based backend service for predicting **emotion** and **language** from uploaded audio files using a trained TensorFlow/Keras model.
+A FastAPI-based backend service for predicting **emotion** and **language** from uploaded audio files using a trained **TensorFlow Lite** model.
 
-The API receives an audio file, preprocesses it into a mel spectrogram, performs model inference, and returns the predicted emotion and language along with confidence scores.
+The API receives an audio file, preprocesses it into a mel spectrogram, performs lightweight model inference using LiteRT, and returns the predicted emotion and language along with confidence scores.
 
 ## Features
 
 * Audio-based emotion prediction
 * English/Urdu language classification
-* TensorFlow/Keras model inference
+* TensorFlow Lite model inference
+* Lightweight LiteRT runtime for deployment
 * Mel spectrogram preprocessing with librosa
 * Image-based spectrogram processing using OpenCV
 * Lazy model loading for efficient startup
-* Google Drive model download using gdown
 * Health check endpoint for frontend warm-up
 * Docker support for deployment
 
@@ -33,11 +33,11 @@ The API supports the following audio file types:
 
 * Python
 * FastAPI
-* TensorFlow/Keras
+* TensorFlow Lite as litert
+* ai-edge-litert
 * librosa
 * OpenCV
 * NumPy
-* gdown
 * Docker
 
 ## Project Structure
@@ -45,6 +45,7 @@ The API supports the following audio file types:
 ```txt
 .
 ├── main.py
+├── best_model.tflite
 ├── requirements.txt
 ├── Dockerfile
 ├── .dockerignore
@@ -52,19 +53,23 @@ The API supports the following audio file types:
 └── README.md
 ```
 
-## Environment Variables
+## Model File
 
-Create a `.env` file in the root directory for local development:
+The project uses a local TensorFlow Lite model file:
 
-```env
-MODEL_FILE_ID=1jspxrqwsShQp6YuiA0H7NIoYXt0H6xBD
-MODEL_PATH=./best_of_best_model.keras
+```txt
+best_model.tflite
 ```
 
-| Variable        | Description                                                   |
-| --------------- | ------------------------------------------------------------- |
-| `MODEL_FILE_ID` | Google Drive file ID of the trained Keras model               |
-| `MODEL_PATH`    | Local path where the model will be downloaded and loaded from |
+The model file is included in the repository because it is small enough to be stored on GitHub and can be loaded directly during deployment.
+
+The model path is configured directly in `main.py`:
+
+```python
+MODEL_PATH = "./best_model.tflite"
+```
+
+Make sure `best_model.tflite` is present in the project root directory before running or deploying the API.
 
 ## Installation
 
@@ -81,7 +86,7 @@ Create a virtual environment:
 python -m venv venv
 ```
 
-Activate the virtual environment:
+Activate the virtual environment on Windows PowerShell:
 
 ```bash
 venv\Scripts\activate
@@ -136,7 +141,7 @@ Example response:
 GET /health
 ```
 
-Checks API status and loads the model if it is not already loaded.
+Checks API status and loads the TFLite model if it is not already loaded.
 
 Example response:
 
@@ -193,37 +198,19 @@ docker build -t emotion-api .
 Run the container:
 
 ```bash
-docker run -p 8000:8000 ^
-  -e MODEL_FILE_ID=1jspxrqwsShQp6YuiA0H7NIoYXt0H6xBD ^
-  -e MODEL_PATH=./best_of_best_model.keras ^
-  emotion-api
-```
-
-For Windows PowerShell:
-
-```bash
-docker run -p 8000:8000 `
-  -e MODEL_FILE_ID=1jspxrqwsShQp6YuiA0H7NIoYXt0H6xBD `
-  -e MODEL_PATH=./best_of_best_model.keras `
-  emotion-api
+docker run -p 8000:8000 emotion-api
 ```
 
 ## Deployment
 
 For deployment on platforms such as Render or Railway:
 
-1. Push the backend code to GitHub.
-2. Add the required environment variables in the platform dashboard.
+1. Push the backend code and `best_model.tflite` to GitHub.
+2. Make sure `best_model.tflite` is not ignored by `.gitignore` or `.dockerignore`.
 3. Deploy using the included `Dockerfile` or the platform’s Python runtime.
 4. Call `/health` when the frontend loads to prepare the model.
 5. Use `/predict` to submit audio files for inference.
 
-Required environment variables:
-
-```txt
-MODEL_FILE_ID=1jspxrqwsShQp6YuiA0H7NIoYXt0H6xBD
-MODEL_PATH=./best_of_best_model.keras
-```
 
 ## Model Labels
 

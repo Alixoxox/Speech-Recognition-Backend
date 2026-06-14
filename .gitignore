@@ -3,4 +3,3 @@ venv/
 .venv/
 __pycache__/
 *.pyc
-best_of_best_model.keras
